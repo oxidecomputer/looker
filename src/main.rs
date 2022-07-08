@@ -119,7 +119,17 @@ fn emit_record(be: BunyanEntry, colour: Colour) -> Result<()> {
             serde_json::Value::Null => println!("null"),
             serde_json::Value::Bool(v) => println!("{}", v),
             serde_json::Value::Number(n) => println!("{}", n),
-            serde_json::Value::String(s) => println!("{:?}", s),
+            serde_json::Value::String(s) => {
+                let mut out = String::new();
+                for c in s.chars() {
+                    if c != '"' && c != '\'' {
+                        out.push_str(&c.escape_default().to_string());
+                    } else {
+                        out.push(c);
+                    }
+                }
+                println!("{}", out);
+            }
             serde_json::Value::Array(a) => println!("{:?}", a),
             serde_json::Value::Object(o) => println!("{:?}", o),
         }
