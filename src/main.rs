@@ -111,7 +111,23 @@ fn emit_record(be: BunyanEntry, colour: Colour) -> Result<()> {
         }
     };
 
-    println!("{:13} {} {}: {}", d, l, n, be.msg);
+    /*
+     * For multi-line messages, indent subsequent lines by 4 spaces, so that
+     * they are at least somewhat distinguishable from the next log message.
+     */
+    let msg = be
+        .msg
+        .lines()
+        .enumerate()
+        .map(|(i, l)| {
+            let mut s = if i > 0 { "    " } else { "" }.to_string();
+            s.push_str(l);
+            s
+        })
+        .collect::<Vec<String>>()
+        .join("\n");
+
+    println!("{:13} {} {}: {}", d, l, n, msg);
     for (k, v) in be.extra.iter() {
         print!("    {} = ", bold(k.as_str(), colour));
 
