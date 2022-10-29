@@ -6,6 +6,12 @@ use serde::Deserialize;
 use serde_repr::Deserialize_repr;
 
 #[derive(Clone, Copy)]
+enum Format {
+    Short,
+    Long,
+}
+
+#[derive(Clone, Copy)]
 enum Colour {
     None,
     C16,
@@ -13,7 +19,6 @@ enum Colour {
 }
 
 #[derive(Deserialize, Debug)]
-#[allow(dead_code)]
 struct BunyanEntry {
     v: i64,
     level: BunyanLevel,
@@ -101,10 +106,12 @@ fn level(bl: BunyanLevel, colour: Colour) -> String {
     bold(&format!("{}{}", bl.ansi_colour(colour), bl.render()), colour)
 }
 
-fn emit_record(be: BunyanEntry, colour: Colour) -> Result<()> {
-    let d = be.time.format("%H:%M:%S%.3fZ").to_string();
+fn emit_record(be: BunyanEntry, colour: Colour, fmt: Format) -> Result<()> {
     let l = level(be.level, colour);
     let mut n = bold(&be.name, colour);
+    if matches!(fmt, Format::Long) {
+        n += &format!("/{}", be.pid);
+    }
     if let Some(c) = &be.component {
         if c != &be.name {
             n += &format!(" ({})", c);
@@ -127,7 +134,17 @@ fn emit_record(be: BunyanEntry, colour: Colour) -> Result<()> {
         .collect::<Vec<String>>()
         .join("\n");
 
-    println!("{:13} {} {}: {}", d, l, n, msg);
+    match fmt {
+        Format::Short => {
+            let d = be.time.format("%H:%M:%S%.3fZ").to_string();
+            println!("{:13} {} {}: {}", d, l, n, msg);
+        }
+        Format::Long => {
+            let d = be.time.format("%Y-%m-%d %H:%M:%S%.3fZ").to_string();
+            println!("{} {} {} on {}: {}", d, l, n, be.hostname, msg);
+        }
+    }
+
     for (k, v) in be.extra.iter() {
         print!("    {} = ", bold(k.as_str(), colour));
 
@@ -183,6 +200,14 @@ fn main() -> Result<()> {
     opts.optflag("", "help", "usage information");
     opts.optflag("C", "", "force coloured output when not a tty");
     opts.optflag("N", "", "no terminal formatting");
+    opts.optopt(
+        "o",
+        "output",
+        "output format:\n\
+        - \"short\" is the default output format\n\
+        - \"long\" prints all fields and long timestamps\n",
+        "FORMAT",
+    );
 
     let a = match opts.parse(std::env::args().skip(1)) {
         Ok(a) if a.free.is_empty() => {
@@ -194,14 +219,26 @@ fn main() -> Result<()> {
         }
         Ok(_) => {
             eprintln!(
-                "{}\nERROR: {}",
+                "{}\nERROR: unexpected arguments",
                 opts.short_usage("looker"),
-                "unexpected arguments",
             );
             std::process::exit(1);
         }
         Err(e) => {
             eprintln!("{}\nERROR: {}", opts.short_usage("looker"), e);
+            std::process::exit(1);
+        }
+    };
+
+    let format = match a.opt_str("o").as_deref() {
+        Some("short") | None => Format::Short,
+        Some("long") => Format::Long,
+        Some(other) => {
+            eprintln!(
+                "{}\nERROR: unknown format type {:?}",
+                opts.short_usage("looker"),
+                other,
+            );
             std::process::exit(1);
         }
     };
@@ -229,7 +266,7 @@ fn main() -> Result<()> {
         match serde_json::from_str::<serde_json::Value>(&l) {
             Ok(j) => {
                 match serde_json::from_value::<BunyanEntry>(j.clone()) {
-                    Ok(be) if be.v == 0 => emit_record(be, colour)?,
+                    Ok(be) if be.v == 0 => emit_record(be, colour, format)?,
                     Ok(_) => {
                         /*
                          * Unrecognised major version in this bunyan record.
