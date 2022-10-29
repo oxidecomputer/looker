@@ -180,10 +180,23 @@ fn main() -> Result<()> {
     let mut lines = stdin.lines();
 
     let mut opts = getopts::Options::new();
+    opts.optflag("", "help", "usage information");
     opts.optflag("C", "", "force coloured output when not a tty");
     opts.optflag("N", "", "no terminal formatting");
 
-    let a = opts.parse(std::env::args().skip(1))?;
+    let a = match opts.parse(std::env::args().skip(1)) {
+        Ok(a) => {
+            if a.opt_present("help") {
+                println!("{}", opts.usage(opts.short_usage("looker").trim()));
+                return Ok(());
+            }
+            a
+        }
+        Err(e) => {
+            eprintln!("{}\nERROR: {}", opts.short_usage("looker"), e);
+            std::process::exit(1);
+        }
+    };
 
     let colour = if a.opt_present("N") {
         Colour::None
