@@ -185,12 +185,20 @@ fn main() -> Result<()> {
     opts.optflag("N", "", "no terminal formatting");
 
     let a = match opts.parse(std::env::args().skip(1)) {
-        Ok(a) => {
+        Ok(a) if a.free.is_empty() => {
             if a.opt_present("help") {
                 println!("{}", opts.usage(opts.short_usage("looker").trim()));
                 return Ok(());
             }
             a
+        }
+        Ok(_) => {
+            eprintln!(
+                "{}\nERROR: {}",
+                opts.short_usage("looker"),
+                "unexpected arguments",
+            );
+            std::process::exit(1);
         }
         Err(e) => {
             eprintln!("{}\nERROR: {}", opts.short_usage("looker"), e);
@@ -208,6 +216,14 @@ fn main() -> Result<()> {
     } else {
         Colour::None
     };
+
+    if atty::is(atty::Stream::Stdin) {
+        /*
+         * It is unlikely that the user intended to run the command without
+         * directing a file or pipe as input.
+         */
+        eprintln!("WARNING: reading from stdin, which is a tty");
+    }
 
     while let Some(l) = lines.next().transpose()? {
         match serde_json::from_str::<serde_json::Value>(&l) {
