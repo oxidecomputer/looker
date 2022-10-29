@@ -1,6 +1,6 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, str::FromStr};
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use chrono::prelude::*;
 use serde::Deserialize;
 use serde_repr::Deserialize_repr;
@@ -37,7 +37,7 @@ struct BunyanEntry {
     extra: BTreeMap<String, serde_json::Value>,
 }
 
-#[derive(Deserialize_repr, Debug)]
+#[derive(Deserialize_repr, Debug, PartialEq, PartialOrd)]
 #[repr(u8)]
 enum BunyanLevel {
     Fatal = 60,
@@ -46,6 +46,28 @@ enum BunyanLevel {
     Info = 30,
     Debug = 20,
     Trace = 10,
+}
+
+impl FromStr for BunyanLevel {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        /*
+         * We accept either the numeric value or the name (ignoring case) of a
+         * level.  We also accept the four column wide truncated version of
+         * names as they appear in some output formats; e.g., "DEBG" for Debug
+         * level logs.
+         */
+        Ok(match s.trim().to_ascii_lowercase().as_str() {
+            "60" | "fatal" | "fata" => BunyanLevel::Fatal,
+            "50" | "error" | "erro" => BunyanLevel::Error,
+            "40" | "warn" => BunyanLevel::Warn,
+            "30" | "info" => BunyanLevel::Info,
+            "20" | "debug" | "debg" => BunyanLevel::Debug,
+            "10" | "trace" | "trac" => BunyanLevel::Trace,
+            other => bail!("unknown level {:?}", other),
+        })
+    }
 }
 
 impl BunyanLevel {
@@ -201,6 +223,13 @@ fn main() -> Result<()> {
     opts.optflag("C", "", "force coloured output when not a tty");
     opts.optflag("N", "", "no terminal formatting");
     opts.optopt(
+        "l",
+        "level",
+        "only show messages at or above this level\n\
+        (e.g., \"info\" or \"30\")",
+        "LEVEL",
+    );
+    opts.optopt(
         "o",
         "output",
         "output format:\n\
@@ -243,6 +272,9 @@ fn main() -> Result<()> {
         }
     };
 
+    let level =
+        a.opt_str("l").as_deref().map(BunyanLevel::from_str).transpose()?;
+
     let colour = if a.opt_present("N") {
         Colour::None
     } else if a.opt_present("C") || atty::is(atty::Stream::Stdout) {
@@ -266,7 +298,14 @@ fn main() -> Result<()> {
         match serde_json::from_str::<serde_json::Value>(&l) {
             Ok(j) => {
                 match serde_json::from_value::<BunyanEntry>(j.clone()) {
-                    Ok(be) if be.v == 0 => emit_record(be, colour, format)?,
+                    Ok(be) if be.v == 0 => {
+                        if let Some(level) = &level {
+                            if &be.level < level {
+                                continue;
+                            }
+                        }
+                        emit_record(be, colour, format)?;
+                    }
                     Ok(_) => {
                         /*
                          * Unrecognised major version in this bunyan record.
