@@ -1,7 +1,8 @@
 use std::{collections::BTreeMap, str::FromStr};
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use chrono::prelude::*;
+use rhai::{Dynamic, Engine, Scope, AST};
 use serde::Deserialize;
 use serde_repr::Deserialize_repr;
 
@@ -214,6 +215,39 @@ fn guess_colour_depth(try_hard: bool) -> Colour {
     }
 }
 
+struct Filter<'a> {
+    engine: Engine,
+    ast: AST,
+    scope: Scope<'a>,
+}
+
+fn parse_filter(s: String) -> Result<Filter<'static>> {
+    let mut engine = Engine::new();
+    engine.register_fn("as_int", |d: Dynamic| -> Dynamic {
+        if d.is_unit() {
+            /*
+             * Just propagate this error.
+             */
+            Dynamic::UNIT
+        } else if d.is_int() {
+            /*
+             * Pass an integer through unmodified.
+             */
+            d
+        } else if let Ok(s) = d.into_string() {
+            s.parse::<i64>().ok().map(|n| n.into()).unwrap_or(Dynamic::UNIT)
+        } else {
+            Dynamic::UNIT
+        }
+    });
+    let scope = Scope::new();
+    let ast = engine
+        .compile_into_self_contained(&scope, &s)
+        .map_err(|e| anyhow!("compiling script: {e}"))?;
+
+    Ok(Filter { engine, ast, scope })
+}
+
 fn main() -> Result<()> {
     let stdin = std::io::stdin();
     let mut lines = stdin.lines();
@@ -237,6 +271,13 @@ fn main() -> Result<()> {
         - \"long\" prints all fields and long timestamps\n",
         "FORMAT",
     );
+    opts.optopt(
+        "c",
+        "",
+        "filter the input with a rhai script that returns a \
+        boolean expression: true to include or false to elide",
+        "SCRIPT",
+    );
 
     let a = match opts.parse(std::env::args().skip(1)) {
         Ok(a) if a.free.is_empty() => {
@@ -258,6 +299,8 @@ fn main() -> Result<()> {
             std::process::exit(1);
         }
     };
+
+    let mut filter = a.opt_str("c").map(parse_filter).transpose()?;
 
     let format = match a.opt_str("o").as_deref() {
         Some("short") | None => Format::Short,
@@ -304,6 +347,45 @@ fn main() -> Result<()> {
                                 continue;
                             }
                         }
+
+                        if let Some(filter) = &mut filter {
+                            let r: Dynamic = serde_json::from_value(j.clone())?;
+
+                            filter.scope.set_or_push("r", r);
+
+                            let include = filter
+                                .engine
+                                .eval_ast_with_scope::<Dynamic>(
+                                    &mut filter.scope,
+                                    &filter.ast,
+                                )
+                                .map_err(|e| anyhow!("script error: {e}"))?;
+
+                            let include = if include.is_unit() {
+                                /*
+                                 * If a script returns (), for convenience
+                                 * we treat that as a request to elide the
+                                 * record.  This makes it possible to do
+                                 * things like:
+                                 *
+                                 *  r.component?.contains("dropshot")
+                                 */
+                                false
+                            } else if let Ok(include) = include.as_bool() {
+                                include
+                            } else {
+                                bail!(
+                                    "script returned type {:?}, \
+                                    not a bool or ()",
+                                    include.type_name()
+                                );
+                            };
+
+                            if !include {
+                                continue;
+                            }
+                        }
+
                         emit_record(be, colour, format)?;
                     }
                     Ok(_) => {
