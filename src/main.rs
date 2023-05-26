@@ -136,11 +136,11 @@ fn level(bl: BunyanLevel, colour: Colour) -> String {
 
 fn emit_bare(j: serde_json::Value, lookups: &Vec<String>) -> Result<()> {
     let o = j.as_object().unwrap();
-    let mut out = Vec::new();
+    let mut outs = Vec::new();
     for l in lookups {
         if let Some(v) = o.get(l) {
-            out.push(match v {
-                serde_json::Value::Null => format!("null"),
+            outs.push(match v {
+                serde_json::Value::Null => "null".to_string(),
                 serde_json::Value::Bool(v) => format!("{}", v),
                 serde_json::Value::Number(n) => format!("{}", n),
                 serde_json::Value::String(s) => {
@@ -152,17 +152,17 @@ fn emit_bare(j: serde_json::Value, lookups: &Vec<String>) -> Result<()> {
                             out.push(c);
                         }
                     }
-                    format!("{}", out)
+                    out
                 }
                 serde_json::Value::Array(a) => format!("{:?}", a),
                 serde_json::Value::Object(o) => format!("{:?}", o),
             });
         } else {
-            out.push("-".into());
+            outs.push("-".into());
         }
     }
 
-    println!("{}", out.join(" "));
+    println!("{}", outs.join(" "));
     Ok(())
 }
 
@@ -212,10 +212,8 @@ fn emit_record(
     }
 
     for (k, v) in be.extra.iter() {
-        if !lookups.is_empty() {
-            if !lookups.contains(k) {
-                continue;
-            }
+        if !lookups.is_empty() && !lookups.contains(k) {
+            continue;
         }
 
         print!("    {} = ", bold(k.as_str(), colour));
@@ -291,7 +289,7 @@ fn parse_filter(s: String) -> Result<Filter<'static>> {
     });
     let scope = Scope::new();
     let ast = engine
-        .compile_into_self_contained(&scope, &s)
+        .compile_into_self_contained(&scope, s)
         .map_err(|e| anyhow!("compiling script: {e}"))?;
 
     Ok(Filter { engine, ast, scope })
