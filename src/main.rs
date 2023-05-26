@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, str::FromStr};
+use std::{
+    collections::BTreeMap,
+    io::{BufRead, BufReader, Read},
+    str::FromStr,
+};
 
 use anyhow::{anyhow, bail, Result};
 use chrono::prelude::*;
@@ -10,6 +14,7 @@ use serde_repr::Deserialize_repr;
 enum Format {
     Short,
     Long,
+    Bare,
 }
 
 #[derive(Clone, Copy)]
@@ -129,7 +134,44 @@ fn level(bl: BunyanLevel, colour: Colour) -> String {
     bold(&format!("{}{}", bl.ansi_colour(colour), bl.render()), colour)
 }
 
-fn emit_record(be: BunyanEntry, colour: Colour, fmt: Format) -> Result<()> {
+fn emit_bare(j: serde_json::Value, lookups: &Vec<String>) -> Result<()> {
+    let o = j.as_object().unwrap();
+    let mut out = Vec::new();
+    for l in lookups {
+        if let Some(v) = o.get(l) {
+            out.push(match v {
+                serde_json::Value::Null => format!("null"),
+                serde_json::Value::Bool(v) => format!("{}", v),
+                serde_json::Value::Number(n) => format!("{}", n),
+                serde_json::Value::String(s) => {
+                    let mut out = String::new();
+                    for c in s.chars() {
+                        if c != '"' && c != '\'' {
+                            out.push_str(&c.escape_default().to_string());
+                        } else {
+                            out.push(c);
+                        }
+                    }
+                    format!("{}", out)
+                }
+                serde_json::Value::Array(a) => format!("{:?}", a),
+                serde_json::Value::Object(o) => format!("{:?}", o),
+            });
+        } else {
+            out.push("-".into());
+        }
+    }
+
+    println!("{}", out.join(" "));
+    Ok(())
+}
+
+fn emit_record(
+    be: BunyanEntry,
+    colour: Colour,
+    fmt: Format,
+    lookups: &Vec<String>,
+) -> Result<()> {
     let l = level(be.level, colour);
     let mut n = bold(&be.name, colour);
     if matches!(fmt, Format::Long) {
@@ -166,9 +208,16 @@ fn emit_record(be: BunyanEntry, colour: Colour, fmt: Format) -> Result<()> {
             let d = be.time.format("%Y-%m-%d %H:%M:%S%.3fZ").to_string();
             println!("{} {} {} on {}: {}", d, l, n, be.hostname, msg);
         }
+        Format::Bare => unreachable!(),
     }
 
     for (k, v) in be.extra.iter() {
+        if !lookups.is_empty() {
+            if !lookups.contains(k) {
+                continue;
+            }
+        }
+
         print!("    {} = ", bold(k.as_str(), colour));
 
         match v {
@@ -249,9 +298,6 @@ fn parse_filter(s: String) -> Result<Filter<'static>> {
 }
 
 fn main() -> Result<()> {
-    let stdin = std::io::stdin();
-    let mut lines = stdin.lines();
-
     let mut opts = getopts::Options::new();
     opts.optflag("", "help", "usage information");
     opts.optflag("C", "", "force coloured output when not a tty");
@@ -278,21 +324,15 @@ fn main() -> Result<()> {
         boolean expression: true to include or false to elide",
         "SCRIPT",
     );
+    opts.optopt("f", "", "read input from a file rather than stdin", "FILE");
 
     let a = match opts.parse(std::env::args().skip(1)) {
-        Ok(a) if a.free.is_empty() => {
+        Ok(a) => {
             if a.opt_present("help") {
                 println!("{}", opts.usage(opts.short_usage("looker").trim()));
                 return Ok(());
             }
             a
-        }
-        Ok(_) => {
-            eprintln!(
-                "{}\nERROR: unexpected arguments",
-                opts.short_usage("looker"),
-            );
-            std::process::exit(1);
         }
         Err(e) => {
             eprintln!("{}\nERROR: {}", opts.short_usage("looker"), e);
@@ -300,11 +340,39 @@ fn main() -> Result<()> {
         }
     };
 
+    let input: Box<dyn Read> = if let Some(p) = a.opt_str("f") {
+        Box::new(
+            std::fs::File::open(&p)
+                .map_err(|e| anyhow!("opening file {p:?}: {e}"))?,
+        )
+    } else {
+        if atty::is(atty::Stream::Stdin) {
+            /*
+             * It is unlikely that the user intended to run the command without
+             * directing a file or pipe as input.
+             */
+            eprintln!("WARNING: reading from stdin, which is a tty");
+        }
+
+        Box::new(std::io::stdin())
+    };
+    let input = BufReader::new(input);
+    let mut lines = input.lines();
+
     let mut filter = a.opt_str("c").map(parse_filter).transpose()?;
+
+    let lookups = &a.free;
 
     let format = match a.opt_str("o").as_deref() {
         Some("short") | None => Format::Short,
         Some("long") => Format::Long,
+        Some("bare") => {
+            if lookups.is_empty() {
+                bail!("bare mode requires at least one property to print");
+            }
+
+            Format::Bare
+        }
         Some(other) => {
             eprintln!(
                 "{}\nERROR: unknown format type {:?}",
@@ -328,14 +396,6 @@ fn main() -> Result<()> {
     } else {
         Colour::None
     };
-
-    if atty::is(atty::Stream::Stdin) {
-        /*
-         * It is unlikely that the user intended to run the command without
-         * directing a file or pipe as input.
-         */
-        eprintln!("WARNING: reading from stdin, which is a tty");
-    }
 
     while let Some(l) = lines.next().transpose()? {
         match serde_json::from_str::<serde_json::Value>(&l) {
@@ -386,15 +446,27 @@ fn main() -> Result<()> {
                             }
                         }
 
-                        emit_record(be, colour, format)?;
+                        if matches!(format, Format::Bare) {
+                            emit_bare(j, lookups)?;
+                        } else {
+                            emit_record(be, colour, format, lookups)?;
+                        }
                     }
                     Ok(_) => {
+                        if matches!(format, Format::Bare) || filter.is_some() {
+                            continue;
+                        }
+
                         /*
                          * Unrecognised major version in this bunyan record.
                          */
                         println!("{}", l);
                     }
                     Err(_) => {
+                        if matches!(format, Format::Bare) || filter.is_some() {
+                            continue;
+                        }
+
                         /*
                          * This record does not contain the minimum required
                          * fields.
@@ -404,6 +476,10 @@ fn main() -> Result<()> {
                 }
             }
             Err(_) => {
+                if matches!(format, Format::Bare) || filter.is_some() {
+                    continue;
+                }
+
                 /*
                  * Lines that cannot be parsed as JSON are emitted as-is.
                  */
