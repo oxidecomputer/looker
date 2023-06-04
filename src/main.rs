@@ -319,7 +319,8 @@ fn main() -> Result<()> {
         "c",
         "",
         "filter the input with a rhai script that returns a \
-        boolean expression: true to include or false to elide",
+        boolean expression: true to include or false to elide; \
+        use `r` to refer to the record under consideration",
         "SCRIPT",
     );
     opts.optopt("f", "", "read input from a file rather than stdin", "FILE");
