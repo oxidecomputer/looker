@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
-use crate::{Level, Record, level, bold, Format};
+use crate::{bold, level, Format, Level, Record};
 
 #[derive(Deserialize, Debug)]
 pub struct BunyanEntry {
@@ -30,10 +30,10 @@ impl Record for BunyanEntry {
     }
 
     fn emit_record(
-            &self,
-            colour: crate::Colour,
-            fmt: crate::Format,
-            lookups: &Vec<String>,
+        &self,
+        colour: crate::Colour,
+        fmt: crate::Format,
+        lookups: &Vec<String>,
     ) -> anyhow::Result<()> {
         let l = level(self.level, colour);
         let mut n = bold(&self.name, colour);
@@ -47,9 +47,9 @@ impl Record for BunyanEntry {
         };
 
         /*
-            * For multi-line messages, indent subsequent lines by 4 spaces, so that
-            * they are at least somewhat distinguishable from the next log message.
-            */
+         * For multi-line messages, indent subsequent lines by 4 spaces, so that
+         * they are at least somewhat distinguishable from the next log message.
+         */
         let msg = self
             .msg
             .lines()

@@ -226,7 +226,7 @@ impl Entry {
     fn as_record(&self) -> &dyn Record {
         match self {
             Entry::Bunyan(be) => be,
-            Entry::Tracing(tr) => tr
+            Entry::Tracing(tr) => tr,
         }
     }
 }
@@ -318,8 +318,7 @@ fn main() -> Result<()> {
         }
     };
 
-    let level =
-        a.opt_str("l").as_deref().map(Level::from_str).transpose()?;
+    let level = a.opt_str("l").as_deref().map(Level::from_str).transpose()?;
 
     let colour = if a.opt_present("N") {
         Colour::None

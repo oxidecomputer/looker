@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::{Record, Colour, Format, Level, level, bold};
+use crate::{bold, level, Colour, Format, Level, Record};
 
 #[derive(Deserialize, Debug)]
 pub struct TracingEntry {
@@ -58,18 +58,18 @@ impl Record for TracingEntry {
     }
 
     fn emit_record(
-            &self,
-            colour: Colour,
-            fmt: Format,
-            lookups: &Vec<String>,
-        ) -> anyhow::Result<()> {
+        &self,
+        colour: Colour,
+        fmt: Format,
+        lookups: &Vec<String>,
+    ) -> anyhow::Result<()> {
         let l = level(self.level.into(), colour);
         let n = bold(&self.target, colour);
 
         /*
-            * For multi-line messages, indent subsequent lines by 4 spaces, so that
-            * they are at least somewhat distinguishable from the next log message.
-            */
+         * For multi-line messages, indent subsequent lines by 4 spaces, so that
+         * they are at least somewhat distinguishable from the next log message.
+         */
         let msg = self
             .fields
             .message
@@ -89,7 +89,8 @@ impl Record for TracingEntry {
                 println!("{:13} {} {}: {}", d, l, n, msg);
             }
             Format::Long => {
-                let d = self.timestamp.format("%Y-%m-%d %H:%M:%S%.3fZ").to_string();
+                let d =
+                    self.timestamp.format("%Y-%m-%d %H:%M:%S%.3fZ").to_string();
                 println!("{} {} {}: {}", d, l, n, msg);
             }
             Format::Bare => unreachable!(),
@@ -133,18 +134,17 @@ impl Record for TracingEntry {
 }
 
 impl Span {
-    fn emit_span(
-        &self,
-        prefix: &str,
-        colour: Colour,
-        lookups: &Vec<String>
-    ) {
+    fn emit_span(&self, prefix: &str, colour: Colour, lookups: &Vec<String>) {
         for (k, v) in self.values.iter() {
             if !lookups.is_empty() && !lookups.contains(k) {
                 continue;
             }
 
-            print!("    {}::{} = ", bold(prefix, colour), bold(k.as_str(), colour));
+            print!(
+                "    {}::{} = ",
+                bold(prefix, colour),
+                bold(k.as_str(), colour)
+            );
 
             match v {
                 serde_json::Value::Null => println!("null"),
