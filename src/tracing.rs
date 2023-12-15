@@ -63,7 +63,7 @@ impl Record for TracingEntry {
         fmt: Format,
         lookups: &Vec<String>,
     ) -> anyhow::Result<()> {
-        let l = level(self.level.into(), colour);
+        let l = level(self.level(), colour);
         let n = bold(&self.target, colour);
 
         /*
