@@ -125,7 +125,7 @@ impl Record for TracingEntry {
 
         if let Some(spans) = &self.spans {
             for (i, span) in spans.iter().enumerate() {
-                span.emit_span(&format!("span[{}]", i), colour, lookups);
+                span.emit_span(i, colour, lookups);
             }
         }
 
@@ -134,7 +134,13 @@ impl Record for TracingEntry {
 }
 
 impl Span {
-    fn emit_span(&self, prefix: &str, colour: Colour, lookups: &Vec<String>) {
+    fn emit_span(&self, index: usize, colour: Colour, lookups: &Vec<String>) {
+        println!(
+            "    {} = {}",
+            bold(&format!("span[{}]", index), colour),
+            self.name
+        );
+
         for (k, v) in self.values.iter() {
             if !lookups.is_empty() && !lookups.contains(k) {
                 continue;
@@ -142,7 +148,7 @@ impl Span {
 
             print!(
                 "    {}::{} = ",
-                bold(prefix, colour),
+                bold(&format!("span[{}]", index), colour),
                 bold(k.as_str(), colour)
             );
 
