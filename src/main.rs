@@ -1,14 +1,17 @@
 use std::{
-    collections::BTreeMap,
     io::{BufRead, BufReader, Read},
     str::FromStr,
 };
 
 use anyhow::{anyhow, bail, Result};
-use chrono::prelude::*;
+use bunyan::BunyanEntry;
 use rhai::{Dynamic, Engine, Scope, AST};
 use serde::Deserialize;
 use serde_repr::Deserialize_repr;
+use tracing::TracingEntry;
+
+mod bunyan;
+mod tracing;
 
 #[derive(Clone, Copy)]
 enum Format {
@@ -24,28 +27,9 @@ enum Colour {
     C256,
 }
 
-#[derive(Deserialize, Debug)]
-struct BunyanEntry {
-    v: i64,
-    level: BunyanLevel,
-    name: String,
-    hostname: String,
-    pid: u64,
-    time: DateTime<Utc>,
-    msg: String,
-
-    /*
-     * This is not a part of the base specification, but is widely used:
-     */
-    component: Option<String>,
-
-    #[serde(flatten)]
-    extra: BTreeMap<String, serde_json::Value>,
-}
-
-#[derive(Deserialize_repr, Debug, PartialEq, PartialOrd)]
+#[derive(Copy, Clone, Deserialize_repr, Debug, PartialEq, PartialOrd)]
 #[repr(u8)]
-enum BunyanLevel {
+pub enum Level {
     Fatal = 60,
     Error = 50,
     Warn = 40,
@@ -54,7 +38,7 @@ enum BunyanLevel {
     Trace = 10,
 }
 
-impl FromStr for BunyanLevel {
+impl FromStr for Level {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -65,40 +49,40 @@ impl FromStr for BunyanLevel {
          * level logs.
          */
         Ok(match s.trim().to_ascii_lowercase().as_str() {
-            "60" | "fatal" | "fata" => BunyanLevel::Fatal,
-            "50" | "error" | "erro" => BunyanLevel::Error,
-            "40" | "warn" => BunyanLevel::Warn,
-            "30" | "info" => BunyanLevel::Info,
-            "20" | "debug" | "debg" => BunyanLevel::Debug,
-            "10" | "trace" | "trac" => BunyanLevel::Trace,
+            "60" | "fatal" | "fata" => Level::Fatal,
+            "50" | "error" | "erro" => Level::Error,
+            "40" | "warn" => Level::Warn,
+            "30" | "info" => Level::Info,
+            "20" | "debug" | "debg" => Level::Debug,
+            "10" | "trace" | "trac" => Level::Trace,
             other => bail!("unknown level {:?}", other),
         })
     }
 }
 
-impl BunyanLevel {
+impl Level {
     fn ansi_colour(&self, colour: Colour) -> String {
         match colour {
             Colour::None => "".to_string(),
             Colour::C16 => {
                 let n = match self {
-                    BunyanLevel::Fatal => 93,
-                    BunyanLevel::Error => 91,
-                    BunyanLevel::Warn => 95,
-                    BunyanLevel::Info => 96,
-                    BunyanLevel::Debug => 94,
-                    BunyanLevel::Trace => 92,
+                    Level::Fatal => 93,
+                    Level::Error => 91,
+                    Level::Warn => 95,
+                    Level::Info => 96,
+                    Level::Debug => 94,
+                    Level::Trace => 92,
                 };
                 format!("\x1b[{}m", n)
             }
             Colour::C256 => {
                 let n = match self {
-                    BunyanLevel::Fatal => 190,
-                    BunyanLevel::Error => 160,
-                    BunyanLevel::Warn => 130,
-                    BunyanLevel::Info => 28,
-                    BunyanLevel::Debug => 44,
-                    BunyanLevel::Trace => 69,
+                    Level::Fatal => 190,
+                    Level::Error => 160,
+                    Level::Warn => 130,
+                    Level::Info => 28,
+                    Level::Debug => 44,
+                    Level::Trace => 69,
                 };
                 format!("\x1b[38;5;{}m", n)
             }
@@ -107,12 +91,12 @@ impl BunyanLevel {
 
     fn render(&self) -> &'static str {
         match self {
-            BunyanLevel::Fatal => "FATA",
-            BunyanLevel::Error => "ERRO",
-            BunyanLevel::Warn => "WARN",
-            BunyanLevel::Info => "INFO",
-            BunyanLevel::Debug => "DEBG",
-            BunyanLevel::Trace => "TRAC",
+            Level::Fatal => "FATA",
+            Level::Error => "ERRO",
+            Level::Warn => "WARN",
+            Level::Info => "INFO",
+            Level::Debug => "DEBG",
+            Level::Trace => "TRAC",
         }
     }
 }
@@ -130,7 +114,7 @@ fn bold(input: &str, colour: Colour) -> String {
     s
 }
 
-fn level(bl: BunyanLevel, colour: Colour) -> String {
+fn level(bl: Level, colour: Colour) -> String {
     bold(&format!("{}{}", bl.ansi_colour(colour), bl.render()), colour)
 }
 
@@ -163,81 +147,6 @@ fn emit_bare(j: serde_json::Value, lookups: &Vec<String>) -> Result<()> {
     }
 
     println!("{}", outs.join(" "));
-    Ok(())
-}
-
-fn emit_record(
-    be: BunyanEntry,
-    colour: Colour,
-    fmt: Format,
-    lookups: &Vec<String>,
-) -> Result<()> {
-    let l = level(be.level, colour);
-    let mut n = bold(&be.name, colour);
-    if matches!(fmt, Format::Long) {
-        n += &format!("/{}", be.pid);
-    }
-    if let Some(c) = &be.component {
-        if c != &be.name {
-            n += &format!(" ({})", c);
-        }
-    };
-
-    /*
-     * For multi-line messages, indent subsequent lines by 4 spaces, so that
-     * they are at least somewhat distinguishable from the next log message.
-     */
-    let msg = be
-        .msg
-        .lines()
-        .enumerate()
-        .map(|(i, l)| {
-            let mut s = if i > 0 { "    " } else { "" }.to_string();
-            s.push_str(l);
-            s
-        })
-        .collect::<Vec<String>>()
-        .join("\n");
-
-    match fmt {
-        Format::Short => {
-            let d = be.time.format("%H:%M:%S%.3fZ").to_string();
-            println!("{:13} {} {}: {}", d, l, n, msg);
-        }
-        Format::Long => {
-            let d = be.time.format("%Y-%m-%d %H:%M:%S%.3fZ").to_string();
-            println!("{} {} {} on {}: {}", d, l, n, be.hostname, msg);
-        }
-        Format::Bare => unreachable!(),
-    }
-
-    for (k, v) in be.extra.iter() {
-        if !lookups.is_empty() && !lookups.contains(k) {
-            continue;
-        }
-
-        print!("    {} = ", bold(k.as_str(), colour));
-
-        match v {
-            serde_json::Value::Null => println!("null"),
-            serde_json::Value::Bool(v) => println!("{}", v),
-            serde_json::Value::Number(n) => println!("{}", n),
-            serde_json::Value::String(s) => {
-                let mut out = String::new();
-                for c in s.chars() {
-                    if c != '"' && c != '\'' {
-                        out.push_str(&c.escape_default().to_string());
-                    } else {
-                        out.push(c);
-                    }
-                }
-                println!("{}", out);
-            }
-            serde_json::Value::Array(a) => println!("{:?}", a),
-            serde_json::Value::Object(o) => println!("{:?}", o),
-        }
-    }
-
     Ok(())
 }
 
@@ -293,6 +202,33 @@ fn parse_filter(s: String) -> Result<Filter<'static>> {
         .map_err(|e| anyhow!("compiling script: {e}"))?;
 
     Ok(Filter { engine, ast, scope })
+}
+
+trait Record {
+    fn level(&self) -> Level;
+
+    fn emit_record(
+        &self,
+        colour: Colour,
+        fmt: Format,
+        lookups: &Vec<String>,
+    ) -> Result<()>;
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum Entry {
+    Bunyan(BunyanEntry),
+    Tracing(TracingEntry),
+}
+
+impl Entry {
+    fn as_record(&self) -> &dyn Record {
+        match self {
+            Entry::Bunyan(be) => be,
+            Entry::Tracing(tr) => tr,
+        }
+    }
 }
 
 fn main() -> Result<()> {
@@ -382,8 +318,7 @@ fn main() -> Result<()> {
         }
     };
 
-    let level =
-        a.opt_str("l").as_deref().map(BunyanLevel::from_str).transpose()?;
+    let level = a.opt_str("l").as_deref().map(Level::from_str).transpose()?;
 
     let colour = if a.opt_present("N") {
         Colour::None
@@ -399,10 +334,22 @@ fn main() -> Result<()> {
     while let Some(l) = lines.next().transpose()? {
         match serde_json::from_str::<serde_json::Value>(&l) {
             Ok(j) => {
-                match serde_json::from_value::<BunyanEntry>(j.clone()) {
-                    Ok(be) if be.v == 0 => {
+                match serde_json::from_value::<Entry>(j.clone()) {
+                    Ok(Entry::Bunyan(be)) if be.v != 0 => {
+                        if matches!(format, Format::Bare) || filter.is_some() {
+                            continue;
+                        }
+
+                        /*
+                         * Unrecognised major version in this bunyan record.
+                         */
+                        println!("{}", l);
+                    }
+                    Ok(entry) => {
+                        let record = entry.as_record();
+
                         if let Some(level) = &level {
-                            if &be.level < level {
+                            if &record.level() < level {
                                 continue;
                             }
                         }
@@ -448,18 +395,8 @@ fn main() -> Result<()> {
                         if matches!(format, Format::Bare) {
                             emit_bare(j, lookups)?;
                         } else {
-                            emit_record(be, colour, format, lookups)?;
+                            record.emit_record(colour, format, lookups)?;
                         }
-                    }
-                    Ok(_) => {
-                        if matches!(format, Format::Bare) || filter.is_some() {
-                            continue;
-                        }
-
-                        /*
-                         * Unrecognised major version in this bunyan record.
-                         */
-                        println!("{}", l);
                     }
                     Err(_) => {
                         if matches!(format, Format::Bare) || filter.is_some() {
