@@ -147,8 +147,7 @@ impl Span {
             }
 
             print!(
-                "    {}::{} = ",
-                bold(&format!("span[{}]", index), colour),
+                "        {} = ",
                 bold(k.as_str(), colour)
             );
 
