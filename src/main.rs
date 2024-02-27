@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeMap,
-    io::{BufRead, BufReader, Read},
+    io::{BufRead, BufReader, IsTerminal, Read},
     str::FromStr,
 };
 
@@ -339,13 +339,15 @@ fn main() -> Result<()> {
         }
     };
 
+    let interactive = std::io::stdout().is_terminal();
+
     let input: Box<dyn Read> = if let Some(p) = a.opt_str("f") {
         Box::new(
             std::fs::File::open(&p)
                 .map_err(|e| anyhow!("opening file {p:?}: {e}"))?,
         )
     } else {
-        if atty::is(atty::Stream::Stdin) {
+        if std::io::stdin().is_terminal() {
             /*
              * It is unlikely that the user intended to run the command without
              * directing a file or pipe as input.
@@ -387,7 +389,7 @@ fn main() -> Result<()> {
 
     let colour = if a.opt_present("N") {
         Colour::None
-    } else if a.opt_present("C") || atty::is(atty::Stream::Stdout) {
+    } else if a.opt_present("C") || interactive {
         /*
          * If explicitly enabled, or if we are interactive, try to use colours:
          */
