@@ -417,14 +417,14 @@ fn main() -> Result<()> {
         if uuid_animals {
             let mut new = vec![];
             for m in re.find_iter(&l) {
-                let mut hasher = std::hash::DefaultHasher::new();
-                use std::hash::{Hash, Hasher};
-                m.as_str().hash(&mut hasher);
-                let hash = hasher.finish() as usize;
+                use sha2::{Digest, Sha256};
+                let hash = Sha256::digest(m.as_str());
+                // We can express 12 of randomness here with 2x emojis
+                let a = (hash[0] as usize) % ANIMALS.len();
+                let b = (hash[1] as usize) % ANIMALS.len();
                 new.push((
                     m.as_str().to_owned(),
-                    ANIMALS[hash % ANIMALS.len()].to_owned()
-                        + ANIMALS[(hash / ANIMALS.len()) % ANIMALS.len()],
+                    ANIMALS[a].to_owned() + ANIMALS[b],
                 ));
             }
             for (uuid, r) in &new {
