@@ -419,7 +419,7 @@ fn main() -> Result<()> {
             for m in re.find_iter(&l) {
                 use sha2::{Digest, Sha256};
                 let hash = Sha256::digest(m.as_str());
-                // We can express 12 of randomness here with 2x emojis
+                // We can express 12 bits of randomness here with 2x emojis
                 let a = (hash[0] as usize) % ANIMALS.len();
                 let b = (hash[1] as usize) % ANIMALS.len();
                 new.push((
