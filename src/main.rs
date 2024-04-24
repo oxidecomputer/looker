@@ -225,7 +225,7 @@ fn emit_record(
             serde_json::Value::String(s) => {
                 let mut out = String::new();
                 for c in s.chars() {
-                    if c != '"' && c != '\'' {
+                    if c != '"' && c != '\'' && c.is_ascii() {
                         out.push_str(&c.escape_default().to_string());
                     } else {
                         out.push(c);
@@ -324,6 +324,7 @@ fn main() -> Result<()> {
         "SCRIPT",
     );
     opts.optopt("f", "", "read input from a file rather than stdin", "FILE");
+    opts.optflag("u", "", "automatically reformat UUIDs");
 
     let a = match opts.parse(std::env::args().skip(1)) {
         Ok(a) => {
@@ -398,7 +399,39 @@ fn main() -> Result<()> {
         Colour::None
     };
 
-    while let Some(l) = lines.next().transpose()? {
+    let uuid_animals = a.opt_present("u");
+    const ANIMALS: [&str; 64] = [
+        "🐶", "🐱", "🐭", "🐹", "🐰", "🦊", "🐻", "🐼", "🐨", "🐯", "🦁", "🐮",
+        "🐷", "🐽", "🐸", "🐵", "🐔", "🐧", "🐦", "🐤", "🪿", "🦆", "🦉", "🦇",
+        "🦇", "🐺", "🐗", "🐴", "🦄", "🫎", "🐝", "🪱", "🐛", "🦋", "🐌", "🐞",
+        "🐜", "🪲", "🪰", "🪳", "🦟", "🦗", "🕷️", "🦍", "🦂", "🐢", "🐍", "🦎",
+        "🦖", "🦕", "🐙", "🦑", "🪼", "🦩", "🐿️", "🦀", "🐡", "🐠", "🐟", "🐬",
+        "🐳", "🐋", "🦈", "🦭",
+    ];
+    let re = regex::Regex::new(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+    )
+    .unwrap();
+
+    while let Some(mut l) = lines.next().transpose()? {
+        if uuid_animals {
+            let mut new = vec![];
+            for m in re.find_iter(&l) {
+                let mut hasher = std::hash::DefaultHasher::new();
+                use std::hash::{Hash, Hasher};
+                m.as_str().hash(&mut hasher);
+                let hash = hasher.finish() as usize;
+                new.push((
+                    m.as_str().to_owned(),
+                    ANIMALS[hash % ANIMALS.len()].to_owned()
+                        + ANIMALS[(hash / ANIMALS.len()) % ANIMALS.len()],
+                ));
+            }
+            for (uuid, r) in &new {
+                l = l.replace(uuid, r);
+            }
+        }
+
         match serde_json::from_str::<serde_json::Value>(&l) {
             Ok(j) => {
                 match serde_json::from_value::<BunyanEntry>(j.clone()) {
