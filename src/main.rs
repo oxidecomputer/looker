@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeMap,
-    io::{BufRead, BufReader, IsTerminal, Read},
+    io::{BufRead, BufReader, IsTerminal, Read, Write},
     str::FromStr,
 };
 
@@ -162,7 +162,7 @@ fn emit_bare(j: serde_json::Value, lookups: &Vec<String>) -> Result<()> {
         }
     }
 
-    println!("{}", outs.join(" "));
+    writeln!(std::io::stdout(), "{}", outs.join(" "))?;
     Ok(())
 }
 
@@ -202,11 +202,19 @@ fn emit_record(
     match fmt {
         Format::Short => {
             let d = be.time.format("%H:%M:%S%.3fZ").to_string();
-            println!("{:13} {} {}: {}", d, l, n, msg);
+            writeln!(std::io::stdout(), "{:13} {} {}: {}", d, l, n, msg)?;
         }
         Format::Long => {
             let d = be.time.format("%Y-%m-%d %H:%M:%S%.3fZ").to_string();
-            println!("{} {} {} on {}: {}", d, l, n, be.hostname, msg);
+            writeln!(
+                std::io::stdout(),
+                "{} {} {} on {}: {}",
+                d,
+                l,
+                n,
+                be.hostname,
+                msg
+            )?;
         }
         Format::Bare => unreachable!(),
     }
@@ -216,12 +224,14 @@ fn emit_record(
             continue;
         }
 
-        print!("    {} = ", bold(k.as_str(), colour));
+        write!(std::io::stdout(), "    {} = ", bold(k.as_str(), colour))?;
 
         match v {
-            serde_json::Value::Null => println!("null"),
-            serde_json::Value::Bool(v) => println!("{}", v),
-            serde_json::Value::Number(n) => println!("{}", n),
+            serde_json::Value::Null => writeln!(std::io::stdout(), "null")?,
+            serde_json::Value::Bool(v) => writeln!(std::io::stdout(), "{}", v)?,
+            serde_json::Value::Number(n) => {
+                writeln!(std::io::stdout(), "{}", n)?
+            }
             serde_json::Value::String(s) => {
                 let mut out = String::new();
                 for c in s.chars() {
@@ -231,10 +241,14 @@ fn emit_record(
                         out.push(c);
                     }
                 }
-                println!("{}", out);
+                writeln!(std::io::stdout(), "{}", out)?;
             }
-            serde_json::Value::Array(a) => println!("{:?}", a),
-            serde_json::Value::Object(o) => println!("{:?}", o),
+            serde_json::Value::Array(a) => {
+                writeln!(std::io::stdout(), "{:?}", a)?
+            }
+            serde_json::Value::Object(o) => {
+                writeln!(std::io::stdout(), "{:?}", o)?
+            }
         }
     }
 
@@ -295,7 +309,19 @@ fn parse_filter(s: String) -> Result<Filter<'static>> {
     Ok(Filter { engine, ast, scope })
 }
 
-fn main() -> Result<()> {
+fn main() {
+    if let Err(e) = exec() {
+        if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
+            if io_err.kind() == std::io::ErrorKind::BrokenPipe {
+                return;
+            }
+        }
+
+        let _ = writeln!(std::io::stderr(), "{e:#}");
+        std::process::exit(1);
+    }
+}
+fn exec() -> Result<()> {
     let mut opts = getopts::Options::new();
     opts.optflag("", "help", "usage information");
     opts.optflag("C", "", "force coloured output when not a tty");
@@ -328,13 +354,22 @@ fn main() -> Result<()> {
     let a = match opts.parse(std::env::args().skip(1)) {
         Ok(a) => {
             if a.opt_present("help") {
-                println!("{}", opts.usage(opts.short_usage("looker").trim()));
+                writeln!(
+                    std::io::stdout(),
+                    "{}",
+                    opts.usage(opts.short_usage("looker").trim())
+                )?;
                 return Ok(());
             }
             a
         }
         Err(e) => {
-            eprintln!("{}\nERROR: {}", opts.short_usage("looker"), e);
+            let _ = writeln!(
+                std::io::stderr(),
+                "{}\nERROR: {}",
+                opts.short_usage("looker"),
+                e
+            );
             std::process::exit(1);
         }
     };
@@ -352,7 +387,10 @@ fn main() -> Result<()> {
              * It is unlikely that the user intended to run the command without
              * directing a file or pipe as input.
              */
-            eprintln!("WARNING: reading from stdin, which is a tty");
+            writeln!(
+                std::io::stderr(),
+                "WARNING: reading from stdin, which is a tty"
+            )?;
         }
 
         Box::new(std::io::stdin())
@@ -375,7 +413,8 @@ fn main() -> Result<()> {
             Format::Bare
         }
         Some(other) => {
-            eprintln!(
+            let _ = writeln!(
+                std::io::stderr(),
                 "{}\nERROR: unknown format type {:?}",
                 opts.short_usage("looker"),
                 other,
@@ -461,7 +500,7 @@ fn main() -> Result<()> {
                         /*
                          * Unrecognised major version in this bunyan record.
                          */
-                        println!("{}", l);
+                        writeln!(std::io::stdout(), "{}", l)?;
                     }
                     Err(_) => {
                         if matches!(format, Format::Bare) || filter.is_some() {
@@ -472,7 +511,7 @@ fn main() -> Result<()> {
                          * This record does not contain the minimum required
                          * fields.
                          */
-                        println!("{}", l);
+                        writeln!(std::io::stdout(), "{}", l)?;
                     }
                 }
             }
@@ -484,7 +523,7 @@ fn main() -> Result<()> {
                 /*
                  * Lines that cannot be parsed as JSON are emitted as-is.
                  */
-                println!("{}", l);
+                writeln!(std::io::stdout(), "{}", l)?;
             }
         }
     }
