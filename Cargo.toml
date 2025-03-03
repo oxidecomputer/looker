@@ -11,3 +11,4 @@ rhai = { version = "1.14", features = ["serde"] }
 serde = { version = "1.0.138", features = ["derive"] }
 serde_json = "1.0.82"
 serde_repr = "0.1.8"
+sigpipe = "0.1"

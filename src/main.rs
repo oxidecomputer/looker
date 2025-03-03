@@ -296,6 +296,8 @@ fn parse_filter(s: String) -> Result<Filter<'static>> {
 }
 
 fn main() -> Result<()> {
+    sigpipe::reset();
+
     let mut opts = getopts::Options::new();
     opts.optflag("", "help", "usage information");
     opts.optflag("C", "", "force coloured output when not a tty");
