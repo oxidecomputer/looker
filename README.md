@@ -24,3 +24,8 @@ in the script will be elided.
   contains `Failed`
 - `looker -c 'r.response_code?.parse_int() >= 500'` - include all lines with a
   `response_code` field in the 5XX level
+
+## Licence
+
+Unless otherwise noted, all components are licenced under the [Mozilla Public
+License Version 2.0](./LICENSE).

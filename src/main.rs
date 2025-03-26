@@ -1,3 +1,7 @@
+/*
+ * Copyright 2025 Oxide Computer Company
+ */
+
 use std::{
     collections::BTreeMap,
     io::{BufRead, BufReader, IsTerminal, Read},
