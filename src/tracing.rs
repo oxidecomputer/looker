@@ -28,7 +28,7 @@ pub enum TracingLevel {
 
 #[derive(Deserialize, Debug)]
 pub struct Fields {
-    pub message: String,
+    pub message: Option<String>,
     #[serde(flatten)]
     pub values: BTreeMap<String, Value>,
 }
@@ -73,6 +73,8 @@ impl Record for TracingEntry {
         let msg = self
             .fields
             .message
+            .as_deref()
+            .unwrap_or("")
             .lines()
             .enumerate()
             .map(|(i, l)| {
